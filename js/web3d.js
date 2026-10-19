@@ -73,39 +73,61 @@ const core = wireSphere(2.1, 12, 20, .9); globe.add(core);
 const hubGeo = { r: .46, lat: 7, lon: 10 }, riderGeo = { r: .26, lat: 5, lon: 8 };
 const hitGeo = new THREE.SphereGeometry(1, 8, 6), hitMat = new THREE.MeshBasicMaterial({ visible: false });
 let nodes = [], byMint = new Map();
-function layout(data) {
-  for (const n of nodes) { G.remove(n.obj); G.remove(n.hit); if (n.el) n.el.remove(); }
-  nodes = []; byMint.clear(); if (liveLines) { G.remove(liveLines); liveLines = null; }
-  const hubs = (data && data.hubs) || []; if (!hubs.length) return;
-  const used = new Set(), live = [];
-  // the strongest hub faces the camera; the rest go round the web, alternating sides
-  let front = 0; ang.forEach((a, i) => { if (Math.abs(Math.sin(a) - 1) < Math.abs(Math.sin(ang[front]) - 1)) front = i; });
-  const step = Math.max(1, Math.floor(SPOKES / hubs.length));
+const spokeOf = new Map();
+let front = 0; ang.forEach((a, i) => { if (Math.abs(Math.sin(a) - 1) < Math.abs(Math.sin(ang[front]) - 1)) front = i; });
+const hstr = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+const pctTxt = c => c.ch1h == null ? '' : (c.ch1h > 0 ? '+' : '') + Math.round(c.ch1h) + '%';
+function mkNode(c, kind, a, r, delay) {
+  const g = kind === 'hub' ? hubGeo : riderGeo, obj = wireSphere(g.r, g.lat, g.lon, kind === 'hub' ? .95 : kind === 'fresh' ? .9 : .8);
+  const [x, z] = P2(a, r); obj.position.set(x, 0, z); obj.userData.spin = (kind === 'hub' ? .4 : .7) * (Math.random() < .5 ? -1 : 1); obj.scale.setScalar(.001);
+  const hit = new THREE.Mesh(hitGeo, hitMat); hit.scale.setScalar(kind === 'hub' ? 1.05 : .75); hit.position.copy(obj.position);
+  G.add(obj); G.add(hit);
+  const now = performance.now();
+  const n = { c, kind, hub: kind === 'hub', a, r, ta: a, tr: r, obj, hit, flash: 0, born: now + delay, dying: 0, landed: kind !== 'fresh', rate: Math.min(1.4, Math.log10(1 + (c.tx5m || 0)) / 2.2), acc: Math.random() };
+  hit.userData.n = n;
+  if (kind === 'hub' || kind === 'fresh') {
+    const el = document.createElement('a'); el.className = 'nl' + (kind === 'fresh' ? ' fresh' : ''); el.href = '/brain?m=' + c.mint;
+    el.innerHTML = kind === 'fresh' ? `${W.img(c.image)}<span>$${W.esc(c.symbol)}</span><em>just launched</em>` : `${W.img(c.image)}<span>$${W.esc(c.symbol)}</span><em>${pctTxt(c)}</em>`;
+    el.style.opacity = 0; labels.appendChild(el); n.el = el; n.labelUntil = kind === 'fresh' ? now + delay + 12000 : Infinity;
+  }
+  nodes.push(n); byMint.set(c.mint, n); return n;
+}
+function drop(n) { G.remove(n.obj); G.remove(n.hit); if (n.el) n.el.remove(); const i = nodes.indexOf(n); if (i >= 0) nodes.splice(i, 1); if (byMint.get(n.c.mint) === n) byMint.delete(n.c.mint); }
+// the web changes in place: new coins pop in, fresh drops fall onto the outer rings, coins that leave shrink away
+function sync(data) {
+  const hubs = (data && data.hubs) || [], fresh = (data && data.fresh) || [];
+  if (!hubs.length && !fresh.length) return;
+  const hubSet = new Set(hubs.map(h => h.mint));
+  for (const m of [...spokeOf.keys()]) if (!hubSet.has(m)) spokeOf.delete(m);
+  const used = new Set(spokeOf.values()), want = new Map();
+  const step = Math.max(1, Math.floor(SPOKES / Math.max(1, hubs.length)));
   hubs.forEach((h, i) => {
-    const k = Math.ceil(i / 2) * (i % 2 ? 1 : -1);
-    let si = ((front + k * step) % SPOKES + SPOKES) % SPOKES;
-    while (used.has(si)) si = (si + 1) % SPOKES; used.add(si);
+    let si = spokeOf.get(h.mint);
+    if (si == null) { const k = Math.ceil(i / 2) * (i % 2 ? 1 : -1); si = ((front + k * step) % SPOKES + SPOKES) % SPOKES; while (used.has(si)) si = (si + 1) % SPOKES; used.add(si); spokeOf.set(h.mint, si); }
     const a = ang[si], rh = 5.2 + i * .82;
-    const add = (c, r, hub, parent) => {
-      const g = hub ? hubGeo : riderGeo, obj = wireSphere(g.r, g.lat, g.lon, hub ? .95 : .8);
-      const [x, z] = P2(a, r); obj.position.set(x, 0, z); obj.userData.spin = (hub ? .4 : .7) * (Math.random() < .5 ? -1 : 1);
-      const hit = new THREE.Mesh(hitGeo, hitMat); hit.scale.setScalar(hub ? 1.05 : .75); hit.position.copy(obj.position);
-      G.add(obj); G.add(hit);
-      obj.scale.setScalar(0.001);
-      const n = { c, hub, parent, a, r, obj, hit, flash: 0, born: performance.now() + 500 + nodes.length * 28, rate: Math.min(1.4, Math.log10(1 + (c.tx5m || 0)) / 2.2), acc: Math.random() };
-      hit.userData.n = n;
-      if (hub) {
-        const el = document.createElement('a'); el.className = 'nl'; el.href = '/brain?m=' + c.mint;
-        el.innerHTML = `${W.img(c.image)}<span>$${W.esc(c.symbol)}</span><em>${c.ch1h == null ? '' : (c.ch1h > 0 ? '+' : '') + Math.round(c.ch1h) + '%'}</em>`;
-        labels.appendChild(el); n.el = el;
-      }
-      nodes.push(n); byMint.set(c.mint, n); return n;
-    };
-    const hn = add(h, rh, true, null);
-    let far = rh;
-    (h.threads || []).forEach((t, j) => { const r = rh + 2.4 + j * 1.9; if (r > R * .86) return; add(t, r, false, hn); far = r; });
-    for (let r = 2.3; r < far; r += .5) { const [x1, z1] = P2(a, r), [x2, z2] = P2(a, Math.min(far, r + .5)); live.push(x1, .02, z1, x2, .02, z2); }
+    want.set(h.mint, { c: h, kind: 'hub', a, r: rh, si });
+    (h.threads || []).forEach((t, j) => { const r = rh + 2.4 + j * 1.9; if (r > R * .86 || want.has(t.mint)) return; want.set(t.mint, { c: t, kind: 'rider', a, r, si }); });
   });
+  const free = ang.map((_, i) => i).filter(i => !used.has(i));
+  fresh.forEach(c => { if (want.has(c.mint)) return; const h = hstr(c.mint), si = free.length ? free[h % free.length] : h % SPOKES; want.set(c.mint, { c, kind: 'fresh', a: ang[si], r: R * (.36 + ((h >>> 8) % 1000) / 1000 * .24) }); });
+  const now = performance.now();
+  for (const n of nodes) if (!n.dying && !want.has(n.c.mint)) n.dying = now;
+  const first = !nodes.length; let d = 0;
+  for (const [m, w] of want) {
+    const n = byMint.get(m);
+    if (n && !n.dying && n.kind === w.kind) {
+      n.c = w.c; n.ta = w.a; n.tr = w.r; n.rate = Math.min(1.4, Math.log10(1 + (w.c.tx5m || 0)) / 2.2);
+      if (n.el && n.kind === 'hub') n.el.querySelector('em').textContent = pctTxt(w.c);
+    } else {
+      if (n) drop(n);
+      mkNode(w.c, w.kind, w.a, w.r, first ? 500 + d * 26 : 200 + d * 160); d++;
+    }
+  }
+  // live threads: each hub's spoke out to its farthest rider
+  if (liveLines) { G.remove(liveLines); liveLines.geometry.dispose(); liveLines = null; }
+  const live = [];
+  hubs.forEach(h => { const w = want.get(h.mint); if (!w) return; let far = w.r; (h.threads || []).forEach(t => { const x = want.get(t.mint); if (x && x.kind === 'rider' && x.si === w.si) far = Math.max(far, x.r); });
+    for (let r = 2.3; r < far; r += .5) { const [x1, z1] = P2(w.a, r), [x2, z2] = P2(w.a, Math.min(far, r + .5)); live.push(x1, .02, z1, x2, .02, z2); } });
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(live, 3));
   liveLines = new THREE.LineSegments(g, liveMat); G.add(liveLines);
 }
@@ -143,7 +165,7 @@ function showTip(n, x, y) {
   if (!tip) return; if (!n) { tip.classList.remove('on'); return; }
   const c = n.c, br = c.brain || {};
   tip.innerHTML = `<div class="h">${W.img(c.image)}<div><b>$${W.esc(c.symbol)}</b><span>${W.esc(c.name || '')}</span></div></div>
-    <p>${br.last ? '“' + W.esc(br.last) + '”' : '<span class="dim">This brain has not had its first thought yet.</span>'}</p>
+    <p>${n.kind === 'fresh' ? '<b>Fresh drop</b> · launched ' + (c.created ? W.ago(c.created) : 'just now') + '. ' : ''}${br.last ? '“' + W.esc(br.last) + '”' : '<span class="dim">This brain has not had its first thought yet.</span>'}</p>
     <div class="k"><div><small>IQ</small>${br.iq || '—'}</div><div><small>MCAP</small>${W.$(c.mc)}</div><div><small>1H</small>${W.pct(c.ch1h)}</div></div>`;
   tip.classList.add('on'); placeTip(x, y);
 }
@@ -164,11 +186,21 @@ function frame(now) {
   const busy = nodes.filter(n => n.c.tx5m).sort((a, b) => b.c.tx5m - a.c.tx5m).slice(0, 8);
   SRC.forEach((s, i) => { const n = busy[i]; if (!n) { s.set(999, 999, 0, 0); return; } s.set(n.obj.position.x, n.obj.position.z, Math.min(.65, .12 + Math.log10(1 + n.c.tx5m) * .16) + n.flash * .6, i * 1.7); });
   // nodes ride the surface
-  for (const n of nodes) {
-    const p = n.obj.position; const y = surfY(p.x, p.z, t) + (n.hub ? .46 : .26) * (1 + n.flash * .6);
-    p.y = y; n.hit.position.y = y; n.obj.rotation.y += n.obj.userData.spin * dt; const pk = Math.max(0, Math.min(1, (now - n.born) / 650)), pop = pk <= 0 ? .001 : 1 + 2.2 * Math.pow(pk - 1, 3) + 1.2 * Math.pow(pk - 1, 2); const s = (1 + n.flash * .7 + (n === hover ? .35 : 0)) * Math.max(.001, pop); n.obj.scale.setScalar(s);
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    // glide to its place on the web
+    n.r += (n.tr - n.r) * Math.min(1, dt * 1.4); n.a += (n.ta - n.a) * Math.min(1, dt * 1.4);
+    const [px, pz] = P2(n.a, n.r), p = n.obj.position; p.x = px; p.z = pz;
+    const pk = Math.max(0, Math.min(1, (now - n.born) / 650)), pop = pk <= 0 ? .001 : 1 + 2.2 * Math.pow(pk - 1, 3) + 1.2 * Math.pow(pk - 1, 2);
+    // fresh drops fall onto the web from above and land with a ripple
+    let fall = 0; if (n.kind === 'fresh') { const fk = Math.max(0, Math.min(1, (now - n.born) / 1100)); fall = (1 - (1 - Math.pow(1 - fk, 3))) * 9; if (!n.landed && fk >= 1) { n.landed = true; n.flash = 1; } }
+    const dk = n.dying ? Math.min(1, (now - n.dying) / 600) : 0;
+    if (dk >= 1) { drop(n); continue; }
+    const y = surfY(p.x, p.z, t) + (n.hub ? .46 : .26) * (1 + n.flash * .6) + fall;
+    p.y = y; n.hit.position.set(p.x, y, p.z); n.obj.rotation.y += n.obj.userData.spin * dt;
+    const s = (1 + n.flash * .7 + (n === hover ? .35 : 0)) * Math.max(.001, pop) * (1 - dk); n.obj.scale.setScalar(Math.max(.001, s));
     n.flash = Math.max(0, n.flash - dt * .7);
-    if (!W.RM) { n.acc += n.rate * dt * .55; while (n.acc >= 1 && pulses.length < MAXP) { n.acc -= 1; pulses.push({ a: n.a, r: n.r, v: 3.2 + Math.random() * 1.6 }); } }
+    if (!W.RM && !n.dying && n.landed) { n.acc += n.rate * dt * .55; while (n.acc >= 1 && pulses.length < MAXP) { n.acc -= 1; pulses.push({ a: n.a, r: n.r, v: 3.2 + Math.random() * 1.6 }); } }
   }
   globe.position.y = surfY(0, 0, t) + 1.7; core.rotation.y += dt * .25; core.rotation.z = .2; core.scale.setScalar(Math.max(.001, 1 - Math.pow(1 - Math.min(1, (now - T_IN) / 1400), 4)));
   // move the pulses
@@ -185,22 +217,16 @@ function frame(now) {
   for (const n of nodes) {
     if (!n.el) continue;
     n.obj.getWorldPosition(v3); const d = v3.distanceTo(cam.position); v3.project(cam);
-    const x = v3.x * hw + hw, y = -v3.y * hh + hh, edge = Math.min(1, Math.max(0, Math.min(x - 8, hw * 2 - 150 - x) / 60)), op = v3.z > 1 ? 0 : Math.max(0, Math.min(1, (62 - d) / 22)) * edge;
+    const x = v3.x * hw + hw, y = -v3.y * hh + hh, edge = Math.min(1, Math.max(0, Math.min(x - 8, hw * 2 - 150 - x) / 60)), life = n.dying ? 0 : now < n.born ? 0 : n === hover ? 1 : Math.max(0, Math.min(1, (n.labelUntil - now) / 1500)), op = v3.z > 1 ? 0 : Math.max(0, Math.min(1, (62 - d) / 22)) * edge * life;
     n.el.style.transform = `translate(${x + 14}px,${y - 12}px) scale(${Math.max(.72, Math.min(1.08, 30 / d))})`; n.el.style.opacity = op; n.el.style.pointerEvents = op > .3 ? 'auto' : 'none'; n.el.style.zIndex = Math.round(100 - d);
   }
 }
 requestAnimationFrame(frame);
 
 window.WEBB3D = {
-  set: data => {
-    const all = ((data && data.hubs) || []).flatMap(h => [h, ...(h.threads || [])]);
-    const same = all.length === nodes.length && all.every(c => byMint.has(c.mint));
-    if (!same) return layout(data);
-    for (const c of all) { const n = byMint.get(c.mint); n.c = c; n.rate = Math.min(1.4, Math.log10(1 + (c.tx5m || 0)) / 2.2); if (n.el) n.el.querySelector('em').textContent = c.ch1h == null ? '' : (c.ch1h > 0 ? '+' : '') + Math.round(c.ch1h) + '%'; }
-  },
+  set: data => sync(data),
   flash: mint => { const n = byMint.get(mint); if (n) { n.flash = 1; for (let k = 0; k < 6; k++) pulses.push({ a: n.a, r: n.r - k * .35, v: 4.5 }); } },
   has: mint => byMint.has(mint),
-  debug: () => ({ pulses: pulses.length, nodes: nodes.length, rates: nodes.slice(0, 3).map(n => n.rate), vis: pts.visible, bs: pGeo.boundingSphere && pGeo.boundingSphere.radius, first: pulses[0], pos: [pPos[0], pPos[1], pPos[2]] }),
-  _p: { pMat, pts, pGeo },
+  debug: () => ({ pulses: pulses.length, nodes: nodes.length, fresh: nodes.filter(n => n.kind === 'fresh').length, hubs: nodes.filter(n => n.hub).length }),
 };
 window.dispatchEvent(new Event('webb3d'));

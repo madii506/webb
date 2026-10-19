@@ -258,5 +258,5 @@
 
   loadWeb(true); loadBrains(); loadActive(true); loadFeed(true).then(() => setTimeout(showNext, 900));
   setInterval(() => loadActive(false), 30e3);
-  setInterval(() => loadWeb(false), 60e3); setInterval(loadBrains, 60e3); setInterval(() => loadFeed(false), 15e3);
+  setInterval(() => loadWeb(false), 20e3); setInterval(loadBrains, 60e3); setInterval(() => loadFeed(false), 15e3);
 })();
