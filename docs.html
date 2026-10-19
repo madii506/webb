@@ -38,10 +38,11 @@
     <h2 id="web"><small>02</small>The web</h2>
     <p>A read of the web runs at most once a minute and is shared by everyone looking at the site.</p>
     <ol>
-      <li><b>Hubs.</b> Jupiter's trending (1h), most-traded (1h), organic (1h) and trending (5m) boards. Only pump.fun launches are kept, with at least $80K market cap and $8K liquidity. The 20 that appear on the most boards, then by hourly volume, are the hubs.</li>
-      <li><b>Riders.</b> For each hub, WEBB builds search keys from its ticker and the distinctive words of its name and looks up every Solana coin carrying them on Dexscreener and Jupiter. A rider must have at least $1.5K liquidity or $8K market cap and be smaller than its hub. The eight biggest riders of each hub are threaded to it.</li>
+      <li><b>Hubs.</b> Jupiter's trending (5m, 1h, 6h), most-traded (1h, 6h) and organic (1h) boards. Only pump.fun launches are kept, with at least $80K market cap and $8K liquidity, and only coins under three days old (older ones only when too few young ones are running). The 26 that appear on the most boards, then by hourly volume, are the hubs.</li>
+      <li><b>Riders.</b> For each hub, WEBB builds search keys from its ticker and the distinctive words of its name and looks up every Solana coin carrying them on Dexscreener and Jupiter. A rider must have at least $1.5K liquidity or $8K market cap, be smaller than its hub and be under seven days old. The eight biggest riders of each hub are threaded to it.</li>
       <li><b>Numbers.</b> Every node gets Jupiter's live market cap, liquidity, 5m / 1h / 24h price change, volume, trade counts and holders. Missing pictures are read from the coin's own metadata on Solana.</li>
     </ol>
+    <p><b>Fresh drops.</b> Every 20 seconds WEBB also reads the newest pump.fun launches and the 5-minute boards and keeps every coin under twelve hours old with at least $5K market cap that is not already on the web. They fall onto the outer rings as fresh drops, get a brain like everyone else, and leave when they grow up or go quiet.</p>
     <p>On the web above the fold, a hub sits on a spoke, closer to the center the stronger it runs, and its riders sit further out on the same spoke. The pulses running down a spoke come from that coin's real trade count over the last five minutes. The ripples come from the eight busiest coins.</p>
 
     <h2 id="brain"><small>03</small>A brain</h2>
