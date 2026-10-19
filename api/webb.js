@@ -346,6 +346,8 @@ async function budget(kind) {
 async function ai(messages, max = 260, kind = 'think') {
   const key = E('AI_GATEWAY_API_KEY') || oidc || E('VERCEL_OIDC_TOKEN');
   if (!key) throw http(503, 'The brains have no line to the model yet.');
+  const pause = (await db()`SELECT extract(epoch FROM now() - at) AS age FROM wb_cache WHERE k='aipause'`)[0];
+  if (pause && pause.age < 600) throw http(503, 'The brains are resting for a few minutes. Try again soon.');
   await budget(kind);
   try {
     const r = await timed(20000)(GATEWAY + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key }, body: JSON.stringify({ model: MODEL, messages, max_tokens: max, temperature: 0.95, response_format: { type: 'json_object' } }) });
@@ -356,8 +358,10 @@ async function ai(messages, max = 260, kind = 'think') {
     return JSON.parse(txt);
   } catch (e) {
     const day = new Date().toISOString().slice(0, 10);
-    db()`UPDATE wb_budget SET fails = fails + 1, last_error = ${String(e.message).slice(0, 200)} WHERE day=${day}`.catch(() => { });
-    throw http(502, 'The model did not answer: ' + String(e.message).slice(0, 120));
+    // a failed call is refunded; a billing or auth refusal pauses every brain for ten minutes instead of retrying
+    db()`UPDATE wb_budget SET calls = greatest(0, calls - 1), asks = greatest(0, asks - ${kind === 'ask' ? 1 : 0}), fails = fails + 1, last_error = ${String(e.message).slice(0, 200)} WHERE day=${day}`.catch(() => { });
+    if (/credit|billing|unauthori|forbidden|api key|quota/i.test(e.message)) await db()`INSERT INTO wb_cache (k, v, at) VALUES ('aipause', ${JSON.stringify({ why: String(e.message).slice(0, 160) })}, now()) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v, at=now()`.catch(() => { });
+    throw http(502, 'The brain could not reach its model just now.');
   }
 }
 const fmt$ = n => n == null ? 'unknown' : n >= 1e6 ? '$' + (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? '$' + (n / 1e3).toFixed(1) + 'K' : '$' + Math.round(n);
@@ -439,7 +443,7 @@ async function cycle(max = 4, budgetMs = 22000) {
     if (Date.now() - t0 > budgetMs) return;
     await db()`UPDATE wb_brains SET next_think = now() + interval '4 minutes' WHERE mint=${b.mint}`;   // claim it
     try { done.push(await wake(b, v)); }
-    catch (e) { done.push({ mint: b.mint, symbol: b.symbol, error: e.message }); if (/no line|budget/.test(e.message)) await db()`UPDATE wb_brains SET next_think = now() + interval '30 minutes' WHERE mint=${b.mint}`; }
+    catch (e) { done.push({ mint: b.mint, symbol: b.symbol, error: e.message }); if (/no line|budget|resting|could not reach/.test(e.message)) await db()`UPDATE wb_brains SET next_think = now() + interval '12 minutes' WHERE mint=${b.mint}`; }
   });
   return done;
 }
@@ -546,7 +550,8 @@ R['GET stats'] = async () => cached('stats', 15, async () => {
   const t = (await s`SELECT count(*) FILTER (WHERE kind='thought')::int AS thoughts, count(*) FILTER (WHERE kind='talk')::int AS talks, count(*) FILTER (WHERE at > now() - interval '24 hours')::int AS d FROM wb_thoughts`)[0];
   const a = (await s`SELECT count(*)::int AS n FROM wb_asks`)[0];
   const bud = (await s`SELECT calls, asks, fails, last_error FROM wb_budget WHERE day=${day}`)[0] || { calls: 0, asks: 0, fails: 0 };
-  return { brains: b.brains, born: b.born, woken: b.woken, awake: b.awake, volSeen: Math.round(Number(b.vol)), thoughts: t.thoughts, talks: t.talks, today: t.d, answers: a.n, calls: bud.calls, callsPerDay: CALLS_DAY, fails: bud.fails, model: MODEL };
+  const pz = (await s`SELECT extract(epoch FROM now() - at) AS age FROM wb_cache WHERE k='aipause'`)[0];
+  return { brains: b.brains, born: b.born, woken: b.woken, awake: b.awake, volSeen: Math.round(Number(b.vol)), thoughts: t.thoughts, talks: t.talks, today: t.d, answers: a.n, calls: bud.calls, callsPerDay: CALLS_DAY, fails: bud.fails, resting: !!(pz && pz.age < 600), model: MODEL };
 });
 R['GET coin'] = async ({ q }) => coin(String(q.ca || '').trim());
 
