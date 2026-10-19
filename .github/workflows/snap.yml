@@ -1,0 +1,57 @@
+name: snapshot
+on:
+  push: { paths: ['.github/workflows/snap.yml'] }
+  workflow_dispatch: {}
+permissions: { contents: write }
+jobs:
+  snap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: save a snapshot of the live web and its pictures
+        run: |
+          python3 - <<'PY'
+          import json, os, hashlib, urllib.request
+          B = 'https://webb-pied-tau.vercel.app'
+          os.makedirs('snap/img', exist_ok=True)
+          def get(p, t=45):
+              r = urllib.request.Request(B + p, headers={'User-Agent': 'Mozilla/5.0'})
+              return json.loads(urllib.request.urlopen(r, timeout=t).read())
+          d = {}
+          for k, p in {'web': '/api/web', 'active': '/api/active', 'brains': '/api/brains?n=200', 'stats': '/api/stats', 'config': '/api/config'}.items():
+              try: d[k] = get(p)
+              except Exception as e: d[k] = {'error': str(e)}
+          top = [h['mint'] for h in (d.get('web', {}).get('hubs') or [])[:3]]
+          d['brain'] = {}
+          for m in top:
+              try: d['brain'][m] = get('/api/brain?m=' + m)
+              except Exception as e: pass
+          urls = set()
+          def walk(x):
+              if isinstance(x, dict):
+                  for k, v in x.items():
+                      if k in ('image', 'to_image') and isinstance(v, str) and v: urls.add(v)
+                      else: walk(v)
+              elif isinstance(x, list):
+                  for v in x: walk(v)
+          walk(d)
+          imgs = {}
+          for u in urls:
+              a = B + u if u.startswith('/') else u
+              try:
+                  r = urllib.request.urlopen(urllib.request.Request(a, headers={'User-Agent': 'Mozilla/5.0'}), timeout=20)
+                  ct = r.headers.get('content-type', '')
+                  b = r.read()
+                  if not ct.startswith('image/') or len(b) > 3_000_000: continue
+                  h = hashlib.sha1(u.encode()).hexdigest()[:16]
+                  open(f'snap/img/{h}', 'wb').write(b); imgs[u] = [h, ct]
+              except Exception as e: pass
+          json.dump({'data': d, 'imgs': imgs}, open('snap/snap.json', 'w'))
+          print('images', len(imgs), 'of', len(urls))
+          PY
+      - name: commit it
+        run: |
+          git config user.name "webb snapshot"; git config user.email "snapshot@users.noreply.github.com"
+          git add snap; git commit -m "snapshot of the live web" || exit 0
+          git push
