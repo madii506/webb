@@ -115,7 +115,7 @@ const jupShape = t => {
   return { mint: t.id, symbol: clean(t.symbol).slice(0, 16), name: clean(t.name).slice(0, 48), image: t.icon || null, mc: Math.round(t.mcap || t.fdv || 0), liq: Math.round(t.liquidity || 0), price: Number(t.usdPrice || 0),
     ch5m: n(s5.priceChange), ch1h: n(s1.priceChange), ch24: n(s24.priceChange),
     vol5m: Math.round((s5.buyVolume || 0) + (s5.sellVolume || 0)), vol1h: Math.round((s1.buyVolume || 0) + (s1.sellVolume || 0)), vol24: Math.round((s24.buyVolume || 0) + (s24.sellVolume || 0)),
-    tx5m: (s5.numBuys || 0) + (s5.numSells || 0), buys1h: s1.numBuys || 0, sells1h: s1.numSells || 0, traders1h: s1.numTraders || null, holders: t.holderCount || 0,
+    tx5m: (s5.numBuys || 0) + (s5.numSells || 0), buys5m: s5.numBuys || 0, sells5m: s5.numSells || 0, buys1h: s1.numBuys || 0, sells1h: s1.numSells || 0, traders1h: s1.numTraders || null, holders: t.holderCount || 0,
     organic: t.organicScore != null ? Math.round(t.organicScore) : null, created: (t.firstPool && t.firstPool.createdAt) || null, bonded: !!t.graduatedPool || !!t.graduatedAt, pad: t.launchpad || null,
     twitter: t.twitter || null, website: t.website || null, dev: t.dev || null };
 };
@@ -456,6 +456,23 @@ R['GET web'] = async () => {
   const b = m => { const r = br.get(m); if (!r) return null; const iq = iqOf(r); return { iq, rung: rungOf(iq), thoughts: r.thoughts, last: r.last_thought, lastThink: r.last_think, temper: mindOf(m, r.launch && r.launch.temper).temper }; };
   return { ...v, hubs: v.hubs.map(h => ({ ...h, brain: b(h.mint), threads: h.threads.map(t => ({ ...t, brain: b(t.mint) })) })) };
 };
+// active right now: the pump.fun coins with the most trades in the last five minutes, and whether each has a brain yet
+const ACTIVE = ['/tokens/v2/toptrending/5m?limit=100', '/tokens/v2/toptraded/5m?limit=100', '/tokens/v2/toporganicscore/5m?limit=100'];
+R['GET active'] = async () => {
+  const v = await cached('active', 25, async () => {
+    const by = new Map(); let ok = 0;
+    for (const p of ACTIVE) {
+      try { const j = await jupGet(p, 8000); ok++; for (const t of (Array.isArray(j) ? j : [])) { if (!t || !t.id || STABLE.test(t.symbol || '') || !isPump(t) || by.has(t.id)) continue; const c = jupShape(t); if (c.mc < 12000 || c.liq < 2500 || !safe(c.symbol) || !safe(c.name)) continue; by.set(c.mint, c); } } catch (e) { }
+    }
+    if (!ok) throw http(502, 'Jupiter did not answer. The board retries in a moment.');
+    const list = [...by.values()].sort((a, b) => (b.tx5m || 0) - (a.tx5m || 0)).slice(0, 36);
+    try { const im = await imagesFor(list.filter(c => !c.image).map(c => c.mint), Date.now() + 6000); for (const c of list) if (!c.image && im[c.mint]) c.image = im[c.mint]; } catch (e) { }
+    return { at: Date.now(), list: list.map(c => ({ ...slim(c), buys5m: c.buys5m, sells5m: c.sells5m, twitter: c.twitter, website: c.website })) };
+  });
+  const rows = await db()`SELECT mint, vol_seen, thoughts, last_thought, last_think, launch FROM wb_brains WHERE mint = ANY(${v.list.map(c => c.mint)})`;
+  const br = new Map(rows.map(r => [r.mint, r]));
+  return { ...v, list: v.list.map(c => { const r = br.get(c.mint); if (!r) return { ...c, brain: null }; const iq = iqOf(r); return { ...c, brain: { iq, rung: rungOf(iq), thoughts: r.thoughts, last: r.last_thought, lastThink: r.last_think, temper: mindOf(c.mint, r.launch && r.launch.temper).temper } }; }) };
+};
 R['GET feed'] = async ({ q }) => {
   const n = Math.min(60, Math.max(5, Number(q.n) || 30));
   const rows = q.kind === 'talk'
@@ -522,7 +539,7 @@ R['POST ask'] = async ({ b, req }) => {
   await db()`UPDATE wb_brains SET answers = answers + 1 WHERE mint=${mint}`;
   return { id: ins.id, at: ins.at, q, a };
 };
-R['GET tick'] = async () => ({ at: Date.now(), done: await cycle(Number(E('WEBB_PER_TICK', '4')) || 4, 22000) });
+R['GET tick'] = async () => ({ at: Date.now(), done: await cycle(Number(E('WEBB_PER_TICK', '3')) || 3, 22000) });
 R['GET stats'] = async () => cached('stats', 15, async () => {
   const s = db(), day = new Date().toISOString().slice(0, 10);
   const b = (await s`SELECT count(*)::int AS brains, count(*) FILTER (WHERE origin='webb')::int AS born, count(*) FILTER (WHERE origin='woken')::int AS woken, count(*) FILTER (WHERE last_think > now() - interval '1 hour')::int AS awake, coalesce(sum(vol_seen),0) AS vol FROM wb_brains`)[0];
@@ -574,7 +591,7 @@ module.exports = async (req, res) => {
     if (!['GET config', 'POST rpc'].includes(key)) await ensure();
     const b = req.method === 'POST' ? await readBody(req) : {};
     const out = await fn({ q, b, req });
-    send(res, 200, out, req.method === 'GET' && ['GET web', 'GET feed', 'GET stats', 'GET brains'].includes(key) ? { 'Cache-Control': 'public, max-age=5, s-maxage=10, stale-while-revalidate=30' } : null);
+    send(res, 200, out, req.method === 'GET' && ['GET web', 'GET feed', 'GET stats', 'GET brains', 'GET active'].includes(key) ? { 'Cache-Control': 'public, max-age=5, s-maxage=10, stale-while-revalidate=30' } : null);
   } catch (e) {
     const code = e.code && e.code >= 400 && e.code < 600 ? e.code : 500;
     if (code === 500) console.error(key, e);
