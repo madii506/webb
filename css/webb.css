@@ -490,8 +490,7 @@ textarea.inp{height:auto;padding:11px 13px;line-height:1.5;resize:vertical}
 .faq summary{transition:padding-left .3s var(--ease)}
 .faq summary:hover{padding-left:8px}
 
-/* buttons: the arrow leans forward */
-.btn{overflow:hidden;position:relative}
-.btn::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.22) 50%,transparent 70%);transform:translateX(-120%);transition:transform .7s var(--ease)}
-.btn:hover::after{transform:translateX(120%)}
-.btn.o::after{background:linear-gradient(110deg,transparent 30%,rgba(13,13,13,.06) 50%,transparent 70%)}
+/* buttons: no overlays, no edge lines */
+.btn::after{content:none}
+.nl.fresh{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.nl.fresh em{color:#c9c9c4}
