@@ -1,0 +1,10 @@
+{
+  "cleanUrls": true,
+  "functions": { "api/webb.js": { "maxDuration": 30 } },
+  "rewrites": [ { "source": "/api/:path*", "destination": "/api/webb?__p=:path*" } ],
+  "headers": [
+    { "source": "/fonts/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] },
+    { "source": "/js/three.module.min.js", "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }] },
+    { "source": "/(.*)", "headers": [{ "key": "X-Content-Type-Options", "value": "nosniff" }, { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }, { "key": "X-Frame-Options", "value": "DENY" }] }
+  ]
+}
