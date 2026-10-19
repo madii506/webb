@@ -193,7 +193,7 @@
       const g = new W.Globe(cell.querySelector('canvas'), m, { iq: 70, lat: 4, lon: 7, pad: .04, think: true }); g.pulse(); aglobes.set(m, g);
       row.classList.add('born');
       if (j.first && j.first.thought) { const say = document.createElement('div'); say.className = 'say'; say.innerHTML = `<b>$${W.esc(c.symbol)}</b> `; const s = document.createElement('span'); say.appendChild(s); row.appendChild(say); W.type(s, j.first.thought, 16); }
-      else if (j.first && j.first.error) W.toast('Paired. Its first thought is queued: ' + j.first.error);
+      else W.toast('Paired. Its first thought lands on its page on its next turn.');
       window.WEBB3D && window.WEBB3D.flash(m);
       $('#acount').textContent = `${ACT.filter(x => x.brain).length} of ${ACT.length} have a brain`;
     } catch (e) { btn.classList.remove('busy'); btn.textContent = 'pair a brain'; W.toast(e.message); }
