@@ -19,7 +19,8 @@ const ASKS_DAY = Number(E('WEBB_ASKS_DAY', '600')) || 600;          // of which 
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SOL = 'So11111111111111111111111111111111111111112';
 const STABLE = /^(usd|usdc|usdt|usds|usdf|pyusd|eurc|usdg)$/i;
-const WEB_SECS = 60, WEB_MAINS = 20, BETAS_PER = 8;
+const WEB_SECS = 60, WEB_MAINS = 26, BETAS_PER = 8, HUB_MAX_H = 72, RIDER_MAX_H = 168, FRESH_MAX_H = 6;
+const ageH = c => c && c.created ? (Date.now() - new Date(c.created).getTime()) / 36e5 : null;
 
 /* ---------------- plumbing ---------------- */
 function send(res, code, body, headers) { res.statusCode = code; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.setHeader('Cache-Control', 'no-store'); res.setHeader('Access-Control-Allow-Origin', '*'); if (headers) for (const k in headers) res.setHeader(k, headers[k]); res.end(JSON.stringify(body)); }
@@ -232,7 +233,10 @@ async function buildWeb(prev) {
     } catch (e) { tick('jupiter', 0); }
   }));
   if (!by.size) throw http(502, 'Jupiter\'s boards did not answer. The web retries in a minute.');
-  const hubs = [...by.values()].sort((a, b) => (b.boards.length - a.boards.length) || ((b.vol1h || 0) - (a.vol1h || 0))).slice(0, WEB_MAINS);
+  // young runners first: coins under three days old fill the web; older ones only if there are too few young ones
+  const rank = (a, b) => (b.boards.length - a.boards.length) || ((b.vol1h || 0) - (a.vol1h || 0));
+  const all = [...by.values()], young = all.filter(c => { const h = ageH(c); return h != null && h <= HUB_MAX_H; }).sort(rank);
+  const hubs = young.length >= 14 ? young.slice(0, WEB_MAINS) : young.concat(all.filter(c => !young.includes(c)).sort(rank)).slice(0, WEB_MAINS);
   const hubSet = new Set(hubs.map(m => m.mint));
   const crowds = hubs.map(m => ({ m, keys: keysOf(m), by: new Map() }));
   const add = (cr, c, from) => {
@@ -263,7 +267,7 @@ async function buildWeb(prev) {
     for (const cr of crowds) for (const c of cr.by.values()) { const j = info[c.mint]; if (!j) continue; for (const f of ['mc', 'liq', 'ch5m', 'ch1h', 'ch24', 'image', 'holders', 'created', 'vol5m', 'vol1h', 'vol24', 'tx5m', 'bonded', 'organic']) if (j[f] != null && j[f] !== 0) c[f] = j[f]; }
   } catch (e) { }
   const out = crowds.map(({ m, keys, by: crowd }) => {
-    let list = [...crowd.values()].filter(c => ((c.liq || 0) >= 1500 || (c.mc || 0) >= 8000) && !((c.mc || 0) > (m.mc || 0)));
+    let list = [...crowd.values()].filter(c => ((c.liq || 0) >= 1500 || (c.mc || 0) >= 8000) && !((c.mc || 0) > (m.mc || 0)) && !(ageH(c) > RIDER_MAX_H));
     const seen = new Map(); for (const c of list) { const k = norm(c.symbol) + '|' + norm(c.name); const o = seen.get(k); if (!o || (c.liq || 0) > (o.liq || 0)) seen.set(k, c); }
     list = [...seen.values()].sort((a, b) => ((b.mc || 0) - (a.mc || 0))).slice(0, BETAS_PER);
     return { ...slim(m), boards: m.boards, keys, threads: list.map(c => ({ ...slim(c), key: hitKey(c, keys) })) };
@@ -289,6 +293,31 @@ async function web() {
     await observe(v).catch(e => console.error('observe', e.message));
     return v;
   } catch (e) { if (row) return row.v; throw e; }
+}
+
+// fresh drops: the newest pump.fun coins that are already being bought, under six hours old. Rebuilt every 20 seconds.
+const FRESH = ['/tokens/v2/recent', '/tokens/v2/toptrending/5m?limit=100', '/tokens/v2/toptraded/5m?limit=100'];
+async function freshNow() {
+  return cached('fresh', 20, async () => {
+    const by = new Map(); let ok = 0;
+    for (const p of FRESH) {
+      try {
+        const j = await jupGet(p, 8000); ok++;
+        for (const t of (Array.isArray(j) ? j : [])) {
+          if (!t || !t.id || STABLE.test(t.symbol || '') || !isPump(t) || by.has(t.id)) continue;
+          const c = jupShape(t), h = ageH(c);
+          if (h == null || h > FRESH_MAX_H || c.mc < 6000 || !safe(c.symbol) || !safe(c.name)) continue;
+          by.set(c.mint, c);
+        }
+      } catch (e) { }
+    }
+    if (!ok) throw http(502, 'Jupiter did not answer.');
+    const list = [...by.values()].sort((a, b) => new Date(b.created) - new Date(a.created)).slice(0, 36);
+    try { const im = await imagesFor(list.filter(c => !c.image).map(c => c.mint), Date.now() + 5000); for (const c of list) if (!c.image && im[c.mint]) c.image = im[c.mint]; } catch (e) { }
+    const out = { at: Date.now(), list: list.map(c => ({ ...slim(c), buys5m: c.buys5m, sells5m: c.sells5m })) };
+    await observe({ at: out.at, fresh: out.list }).catch(e => console.error('observe fresh', e.message));
+    return out;
+  });
 }
 
 /* ---------------- brains ----------------
@@ -322,7 +351,8 @@ const pubBrain = b => {
 };
 // every web build: brains are born for new nodes, and every brain counts the volume that moved through it since it last looked
 async function observe(v) {
-  const nodes = []; for (const h of v.hubs) { nodes.push({ ...h, hub: true }); for (const t of h.threads) nodes.push({ ...t, hub: false, hubMint: h.mint }); }
+  const nodes = []; for (const h of (v.hubs || [])) { nodes.push({ ...h, hub: true }); for (const t of h.threads) nodes.push({ ...t, hub: false, hubMint: h.mint }); }
+  for (const f of (v.fresh || [])) nodes.push({ ...f, hub: false });
   if (!nodes.length) return;
   const mints = nodes.map(n => n.mint);
   const live = nodes.map(n => JSON.stringify({ mc: n.mc, liq: n.liq, price: n.price, ch5m: n.ch5m, ch1h: n.ch1h, ch24: n.ch24, vol1h: n.vol1h, vol24: n.vol24, tx5m: n.tx5m, holders: n.holders, organic: n.organic, bonded: n.bonded, hub: n.hub, at: v.at }));
@@ -402,6 +432,9 @@ async function placeOf(mint, v) {
     const t = h.threads.find(x => x.mint === mint);
     if (t) return { hub: h, rank: null, text: `a rider on the thread of $${h.symbol} (hub #${i + 1}), the coin whose name you carry`, neighbors: [{ ...h, rel: 'your hub' }, ...h.threads.filter(x => x.mint !== mint).slice(0, 3).map(x => ({ ...x, rel: 'rides the same hub' }))] };
   }
+  const fr = (await db()`SELECT v FROM wb_cache WHERE k='fresh'`)[0];
+  const f = fr && fr.v && (fr.v.list || []).find(x => x.mint === mint);
+  if (f) return { hub: null, rank: null, text: 'a fresh drop: launched on pump.fun less than six hours ago and already being bought, landing on the outer rings of the web', neighbors: [] };
   return null;
 }
 async function wake(b, v) {
@@ -436,7 +469,8 @@ async function wake(b, v) {
 async function cycle(max = 4, budgetMs = 22000) {
   const t0 = Date.now(); let v;
   try { v = await web(); } catch (e) { v = (await db()`SELECT v FROM wb_cache WHERE k='web'`)[0]?.v || { hubs: [] }; }
-  const onWeb = (v.hubs || []).flatMap(h => [h.mint, ...h.threads.map(t => t.mint)]);
+  const fr = (await db()`SELECT v FROM wb_cache WHERE k='fresh'`)[0];
+  const onWeb = (v.hubs || []).flatMap(h => [h.mint, ...h.threads.map(t => t.mint)]).concat(((fr && fr.v && fr.v.list) || []).map(c => c.mint));
   const due = await db()`SELECT * FROM wb_brains WHERE next_think <= now() AND (mint = ANY(${onWeb}) OR (origin <> 'web' AND born > now() - interval '14 days')) ORDER BY (origin = 'webb') DESC, (mint = ANY(${(v.hubs || []).map(h => h.mint)})) DESC, next_think ASC LIMIT ${max}`;
   const done = [];
   await pool(due, 4, async b => {
@@ -453,12 +487,14 @@ const R = {};
 const host = req => String(req.headers['x-forwarded-host'] || req.headers.host || 'webb').replace(/[^\w.:-]/g, '').slice(0, 80);
 R['GET config'] = async () => ({ model: MODEL, callsPerDay: CALLS_DAY, asksPerDay: ASKS_DAY, rungs: RUNGS, tempers: TEMPERS.map(t => t[0]), every: WEB_SECS, hubs: WEB_MAINS, threadsPerHub: BETAS_PER });
 R['GET web'] = async () => {
-  const v = await web();
-  const mints = v.hubs.flatMap(h => [h.mint, ...h.threads.map(t => t.mint)]);
+  const [v, fr] = await Promise.all([web(), freshNow().catch(() => ({ list: [] }))]);
+  const onWeb = new Set(v.hubs.flatMap(h => [h.mint, ...h.threads.map(t => t.mint)]));
+  const fresh = fr.list.filter(c => !onWeb.has(c.mint)).slice(0, 30);
+  const mints = [...onWeb, ...fresh.map(c => c.mint)];
   const rows = await db()`SELECT mint, vol_seen, thoughts, talks, last_thought, last_think, born, origin, launch FROM wb_brains WHERE mint = ANY(${mints})`;
   const br = new Map(rows.map(r => [r.mint, r]));
   const b = m => { const r = br.get(m); if (!r) return null; const iq = iqOf(r); return { iq, rung: rungOf(iq), thoughts: r.thoughts, last: r.last_thought, lastThink: r.last_think, temper: mindOf(m, r.launch && r.launch.temper).temper }; };
-  return { ...v, hubs: v.hubs.map(h => ({ ...h, brain: b(h.mint), threads: h.threads.map(t => ({ ...t, brain: b(t.mint) })) })) };
+  return { ...v, freshAt: fr.at, fresh: fresh.map(c => ({ ...c, brain: b(c.mint) })), hubs: v.hubs.map(h => ({ ...h, brain: b(h.mint), threads: h.threads.map(t => ({ ...t, brain: b(t.mint) })) })) };
 };
 // active right now: the pump.fun coins with the most trades in the last five minutes, and whether each has a brain yet
 const ACTIVE = ['/tokens/v2/toptrending/5m?limit=100', '/tokens/v2/toptraded/5m?limit=100', '/tokens/v2/toporganicscore/5m?limit=100'];
@@ -506,7 +542,7 @@ R['GET brain'] = async ({ q }) => {
     db()`SELECT id, q, a, at FROM wb_asks WHERE mint=${mint} ORDER BY at DESC LIMIT 20`,
   ]);
   const brain = row ? pubBrain(row) : null;
-  return { at: Date.now(), mint, brain, live, place: pl ? { text: pl.text, rank: pl.rank, hub: { mint: pl.hub.mint, symbol: pl.hub.symbol, image: pl.hub.image }, neighbors: pl.neighbors.map(n => ({ mint: n.mint, symbol: n.symbol, image: n.image, rel: n.rel, ch1h: n.ch1h, mc: n.mc })) } : null,
+  return { at: Date.now(), mint, brain, live, place: pl ? { text: pl.text, rank: pl.rank, hub: pl.hub ? { mint: pl.hub.mint, symbol: pl.hub.symbol, image: pl.hub.image } : null, neighbors: pl.neighbors.map(n => ({ mint: n.mint, symbol: n.symbol, image: n.image, rel: n.rel, ch1h: n.ch1h, mc: n.mc })) } : null,
     thoughts, talksIn, asks, memory: row ? (row.memory || []).slice().reverse() : [] };
 };
 // anyone can wake a brain for any Solana coin with a market
