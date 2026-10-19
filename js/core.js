@@ -83,24 +83,75 @@
     const x = c.getContext('2d'); let w, h, d;
     const fit = () => { d = Math.min(2, devicePixelRatio || 1); w = innerWidth; h = innerHeight; c.width = w * d; c.height = h * d; x.setTransform(d, 0, 0, d, 0, 0); };
     fit(); addEventListener('resize', fit);
-    const r = W.rand(7), specks = Array.from({ length: 26 }, () => ({ x: r(), y: r(), s: r() < .3 ? 3 : 2, v: .2 + r() * .6, plus: r() < .35 }));
-    let t0 = performance.now(), lastF = 0;
+    const r = W.rand(7);
+    // two orb webs hang in the background: one big on the right, one small on the left. they turn slowly, sway with the
+    // pointer, ripple when something happens, and pulses run down their spokes toward their hubs.
+    const mkWeb = (fx, fy, R, spokes, seed) => {
+      const rr = W.rand(seed), ang = [...Array(spokes).keys()].map(i => (i + (rr() - .5) * .35) / spokes * 6.283), rim = ang.map(() => .82 + rr() * .2);
+      const rings = []; for (let q = .07; q < .96; q += .045 + rr() * .012) rings.push(q);
+      return { fx, fy, R, ang, rim, rings, rot: rr() * 6, spin: (rr() < .5 ? 1 : -1) * (.008 + rr() * .01), pulses: [], acc: 0 };
+    };
+    const webs = [mkWeb(.86, .34, 1.0, 26, 3), mkWeb(.08, .86, .55, 18, 9)];
+    const specks = Array.from({ length: 22 }, () => ({ x: r(), y: r(), s: r() < .3 ? 3 : 2, v: .2 + r() * .6, plus: r() < .35 }));
+    let mx = .5, my = .5, sy = 0, ripple = 0;
+    addEventListener('pointermove', e => { mx = e.clientX / w; my = e.clientY / h; }, { passive: true });
+    addEventListener('scroll', () => { const n = scrollY; ripple = Math.min(1, ripple + Math.abs(n - sy) / 900); sy = n; }, { passive: true });
+    W.ripple = () => { ripple = 1; webs.forEach(wb => { for (let i = 0; i < 6; i++) wb.pulses.push({ s: Math.floor(Math.random() * wb.ang.length), p: 1, v: .25 + Math.random() * .2 }); }); };
+    let t0 = performance.now(), lastF = 0, lastT = t0;
     const draw = t => {
-      requestAnimationFrame(draw); if (document.hidden || t - lastF < 40) return; lastF = t;
-      const k = (t - t0) / 1000; x.clearRect(0, 0, w, h);
-      const g = 26, ox = (k * 4) % g, oy = (k * 2.4) % g;
+      requestAnimationFrame(draw); if (document.hidden || t - lastF < 33) return; lastF = t;
+      const k = (t - t0) / 1000, dt = Math.min(.1, (t - lastT) / 1000); lastT = t; x.clearRect(0, 0, w, h);
+      ripple = Math.max(0, ripple - dt * .6);
+      // drifting dot field
+      const g = 28, ox = (k * 4) % g, oy = ((k * 2.4) - sy * .15) % g;
       for (let yy = -g + oy; yy < h + g; yy += g) for (let xx = -g + ox; xx < w + g; xx += g) {
         const wave = .5 + .5 * Math.sin(xx * .006 + yy * .004 + k * .7);
-        x.fillStyle = `rgba(13,13,13,${.045 + .07 * wave})`; x.fillRect(xx, yy, 1.4, 1.4);
+        x.fillStyle = `rgba(13,13,13,${.035 + .055 * wave})`; x.fillRect(xx, yy, 1.3, 1.3);
+      }
+      // the webs
+      for (const wb of webs) {
+        wb.rot += wb.spin * dt * (1 + ripple * 6);
+        const S = Math.max(w, h) * wb.R * .62, cx = w * wb.fx + (mx - .5) * 26, cy = h * wb.fy + (my - .5) * 18 - (sy * .08) % (h * .2);
+        const P = (a, q) => { const sway = 1 + .012 * Math.sin(k * 1.3 + a * 3) + ripple * .02 * Math.sin(q * 30 - k * 8); return [cx + Math.cos(a + wb.rot) * q * S * sway, cy + Math.sin(a + wb.rot) * q * S * sway * .92]; };
+        x.lineWidth = 1;
+        x.strokeStyle = 'rgba(13,13,13,.075)';
+        x.beginPath();
+        wb.ang.forEach((a, i) => { const [x1, y1] = P(a, 0), [x2, y2] = P(a, wb.rim[i]); x.moveTo(x1, y1); x.lineTo(x2, y2); });
+        x.stroke();
+        x.strokeStyle = 'rgba(13,13,13,.06)';
+        x.beginPath();
+        for (const q of wb.rings) {
+          for (let i = 0; i < wb.ang.length; i++) {
+            const j = (i + 1) % wb.ang.length; if (q > Math.min(wb.rim[i], wb.rim[j])) continue;
+            const a1 = wb.ang[i], a2 = j ? wb.ang[j] : wb.ang[0] + 6.283;
+            const [x1, y1] = P(a1, q), [x2, y2] = P(a2, q), [xm, ym] = P((a1 + a2) / 2, q * .94);
+            x.moveTo(x1, y1); x.quadraticCurveTo(xm * 2 - (x1 + x2) / 2, ym * 2 - (y1 + y2) / 2, x2, y2);
+          }
+        }
+        x.stroke();
+        // pulses toward the hub
+        wb.acc += dt * .9; while (wb.acc > 1) { wb.acc -= 1; wb.pulses.push({ s: Math.floor(Math.random() * wb.ang.length), p: wb.rim[0], v: .12 + Math.random() * .12 }); }
+        x.fillStyle = 'rgba(13,13,13,.32)';
+        for (let i = wb.pulses.length - 1; i >= 0; i--) { const q = wb.pulses[i]; q.p -= q.v * dt; if (q.p < .04) { wb.pulses.splice(i, 1); continue; } const [px, py] = P(wb.ang[q.s], q.p); x.fillRect(px - 2, py - 2, 4, 4); }
+        const [hx, hy] = P(0, 0); x.strokeStyle = 'rgba(13,13,13,.18)'; x.beginPath(); x.arc(hx, hy, 5 + Math.sin(k * 2) * 1.5, 0, 6.283); x.stroke();
       }
       for (const s of specks) {
-        const px = ((s.x * w + k * 6 * s.v) % (w + 40)) - 20, py = (s.y * h + Math.sin(k * .3 + s.x * 9) * 12);
-        x.fillStyle = 'rgba(13,13,13,.28)'; x.strokeStyle = 'rgba(13,13,13,.28)';
+        const px = ((s.x * w + k * 6 * s.v) % (w + 40)) - 20, py = ((s.y * h + Math.sin(k * .3 + s.x * 9) * 12 - sy * .05 * s.v) % h + h) % h;
+        x.fillStyle = 'rgba(13,13,13,.25)'; x.strokeStyle = 'rgba(13,13,13,.25)';
         if (s.plus) { x.lineWidth = 1; x.beginPath(); x.moveTo(px - 5, py); x.lineTo(px + 5, py); x.moveTo(px, py - 5); x.lineTo(px, py + 5); x.stroke(); }
         else x.fillRect(px, py, s.s, s.s);
       }
     };
     if (!RM) requestAnimationFrame(draw); else draw(performance.now());
+  }
+
+  /* ---------- the scroll thread: a strand down the left edge, a spider of progress on it ---------- */
+  function thread() {
+    if (innerWidth < 900) return;
+    const el = document.createElement('div'); el.className = 'strand'; el.innerHTML = '<i></i><b></b>'; document.body.appendChild(el);
+    const dot = el.querySelector('b'), fill = el.querySelector('i');
+    const up = () => { const m = document.documentElement.scrollHeight - innerHeight, p = m > 0 ? scrollY / m : 0; fill.style.transform = `scaleY(${p})`; dot.style.top = (p * 100) + '%'; };
+    addEventListener('scroll', up, { passive: true }); up();
   }
 
   /* ---------- reveals ---------- */
@@ -120,12 +171,14 @@
     els.forEach(e => io.observe(e));
     const sweep = () => document.querySelectorAll('.rv:not(.vis)').forEach(e => { if (e.getBoundingClientRect().top < innerHeight) e.classList.add('vis'); });
     addEventListener('hashchange', sweep); setTimeout(sweep, 1200);
+    const so = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('seen'); so.unobserve(e.target); W.ripple && W.ripple(); } }), { rootMargin: '0px 0px -20% 0px' });
+    document.querySelectorAll('.sec').forEach(s => so.observe(s));
   }
   W.reveals = reveals;
   W.cardsIn = root => { const cs = (root || document).querySelectorAll('.card:not(.in-view)'); cs.forEach((c, i) => setTimeout(() => c.classList.add('in-view'), 40 + i * 45)); };
 
   document.addEventListener('DOMContentLoaded', () => {
-    ground(); reveals();
+    ground(); reveals(); thread();
     const mk = document.querySelector('.nav .l canvas'); if (mk) new Globe(mk, 'webb-mark', { lat: 6, lon: 10, tilt: .35, pad: .04, iq: 64, spin: 1.2 });
     const p = location.pathname.replace(/\/$/, '') || '/';
     document.querySelectorAll('.nav .c a').forEach(a => { const h = a.getAttribute('href'); if (h === p || (h !== '/' && p.startsWith(h))) a.classList.add('on'); });

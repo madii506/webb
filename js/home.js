@@ -86,7 +86,7 @@
       }
       tape(f.list);
       (first ? f.list.slice(0, 8).reverse() : fresh).forEach(x => { if (x.kind !== 'talk') queue.push(x); });
-      if (!first) fresh.forEach(x => window.WEBB3D && window.WEBB3D.flash(x.mint));
+      if (!first) { fresh.forEach(x => window.WEBB3D && window.WEBB3D.flash(x.mint)); if (fresh.length && W.ripple) W.ripple(); }
     } catch (e) { }
   }
   // the hero line types the newest thoughts, one after another
@@ -137,6 +137,32 @@
     requestAnimationFrame(draw);
   }
   document.querySelectorAll('.flow canvas').forEach(mini);
+  document.querySelectorAll('.cols3 canvas').forEach(c => {
+    const g = c.dataset.g;
+    if (g === 'brain') { new W.Globe(c, 'idea-brain', { iq: 120, think: true, lat: 8, lon: 13, pad: .04 }); return; }
+    const x = c.getContext('2d'); let w, h, vis = true;
+    const fit = () => { const d = Math.min(2, devicePixelRatio || 1); w = c.clientWidth; h = c.clientHeight; c.width = w * d; c.height = h * d; x.setTransform(d, 0, 0, d, 0, 0); };
+    fit(); addEventListener('resize', fit); new IntersectionObserver(e => { vis = e[0].isIntersecting; }).observe(c);
+    const pts = Array.from({ length: 7 }, (_, i) => ({ a: i / 7 * 6.283 + .3, r: .55 + (i % 3) * .14 }));
+    const draw = t => {
+      requestAnimationFrame(draw); if (!vis || document.hidden) return; const k = t / 1000; x.clearRect(0, 0, w, h); x.lineWidth = 1.2;
+      if (g === 'pulse') {
+        x.strokeStyle = 'rgba(13,13,13,.85)'; x.beginPath();
+        for (let px = 0; px <= w; px += 2) { const u = (px / w * 3 - k * .6) % 1, ph = u < 0 ? u + 1 : u; let y = h * .6; if (ph > .42 && ph < .46) y -= (ph - .42) / .04 * h * .45; else if (ph >= .46 && ph < .5) y -= (1 - (ph - .46) / .04) * h * .45 - (ph - .46) / .04 * h * .12; else if (ph >= .5 && ph < .54) y += h * .12 * (1 - (ph - .5) / .04); y += Math.sin(px * .05 + k * 2) * 1.5; px ? x.lineTo(px, y) : x.moveTo(px, y); }
+        x.stroke();
+        const hx = (k * 60) % w; x.fillStyle = '#0d0d0d'; x.fillRect(hx - 3, h * .6 - 3, 6, 6);
+      } else {
+        const cx = w / 2, cy = h / 2, R = Math.min(w / 2, h / 2) * .95;
+        x.strokeStyle = 'rgba(13,13,13,.25)'; x.beginPath();
+        pts.forEach(p => { x.moveTo(cx, cy); x.lineTo(cx + Math.cos(p.a + k * .1) * R * 1.8, cy + Math.sin(p.a + k * .1) * R * .9); }); x.stroke();
+        for (let q = .3; q < 1.01; q += .23) { x.beginPath(); x.ellipse(cx, cy, R * 1.8 * q, R * .9 * q, 0, 0, 6.283); x.stroke(); }
+        pts.forEach((p, i) => { const a = p.a + k * .1, px = cx + Math.cos(a) * R * 1.8 * p.r, py = cy + Math.sin(a) * R * .9 * p.r; x.strokeStyle = 'rgba(13,13,13,.9)'; x.beginPath(); x.arc(px, py, 5, 0, 6.283); x.stroke();
+          const f = (k * .5 + i / 7) % 1; x.fillStyle = '#0d0d0d'; x.fillRect(px + (cx - px) * f - 2, py + (cy - py) * f - 2, 4, 4); });
+        x.strokeStyle = '#0d0d0d'; x.beginPath(); x.arc(cx, cy, 8 + Math.sin(k * 3), 0, 6.283); x.stroke();
+      }
+    };
+    requestAnimationFrame(draw);
+  });
 
 
   /* ---------- active right now: pair any live coin with a brain ---------- */
@@ -172,6 +198,7 @@
     const prevTx = new Map(ACT._prev || []);
     aglobes.forEach(g => g.stop()); aglobes.clear();
     box.innerHTML = list.map((c, i) => arow(c, i, max)).join('');
+    if (!animate) box.querySelectorAll('.brow').forEach((r, i) => { r.style.setProperty('--i', i); r.classList.add('in'); });
     box.querySelectorAll('canvas[data-seed]').forEach(cv => aglobes.set(cv.dataset.seed, new W.Globe(cv, cv.dataset.seed, { iq: +cv.dataset.iq, lat: 4, lon: 7, pad: .04 })));
     box.querySelectorAll('.brow').forEach(r => {
       const old = before.get(r.dataset.m), now = r.getBoundingClientRect().top;
