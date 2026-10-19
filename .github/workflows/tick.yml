@@ -1,0 +1,12 @@
+name: brains
+on:
+  schedule: [{ cron: '*/5 * * * *' }]
+  workflow_dispatch: {}
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: wake the brains whose turn it is
+        run: |
+          for i in 1 2; do curl -s -m 28 https://webb-pied-tau.vercel.app/api/tick || true; echo; sleep 140; done
