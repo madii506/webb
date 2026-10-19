@@ -84,6 +84,7 @@
         talks.innerHTML = t.list.length ? t.list.slice(0, 7).map(trow).join('') : `<div class="empty" style="margin:14px 0"><b>Nobody has spoken yet.</b>When a brain says something to a brain it is threaded to, the line shows up here.</div>`;
         $('#tcount').textContent = t.list.length ? t.list.length + ' recent' : '';
       }
+      tape(f.list);
       (first ? f.list.slice(0, 8).reverse() : fresh).forEach(x => { if (x.kind !== 'talk') queue.push(x); });
       if (!first) fresh.forEach(x => window.WEBB3D && window.WEBB3D.flash(x.mint));
     } catch (e) { }
@@ -137,16 +138,98 @@
   }
   document.querySelectorAll('.flow canvas').forEach(mini);
 
+
+  /* ---------- active right now: pair any live coin with a brain ---------- */
+  let ACT = [], asort = 'tx', afil = '';
+  const ageOf = c => { if (!c.created) return '—'; const m = (Date.now() - new Date(c.created).getTime()) / 60000; return m < 60 ? Math.round(m) + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'; };
+  const aglobes = new Map();
+  function arow(c, i, max) {
+    const b = c.brain, tx = c.tx5m || 0, bw = max ? (c.buys5m || 0) / max * 100 : 0, sw = max ? (c.sells5m || 0) / max * 100 : 0;
+    const sp = Math.max(.8, 6 - Math.log10(1 + tx) * 2).toFixed(2);
+    return `<div class="brow" data-m="${c.mint}">
+      <span class="rk">${i + 1}</span>
+      <a class="co" href="/brain?m=${c.mint}">${W.img(c.image)}<div style="min-width:0"><b>$${W.esc(c.symbol)}</b><span>${W.esc(c.name || '')}</span></div></a>
+      <span class="ag">${ageOf(c)}</span>
+      <span>${W.$(c.mc)}</span>
+      <span>${W.pct(c.ch5m)}</span>
+      <span>${W.pct(c.ch1h)}</span>
+      <div class="act" title="${c.buys5m || 0} buys · ${c.sells5m || 0} sells in the last 5 minutes"><div class="bars" style="--sp:${sp}s"><i class="b" style="width:${bw}%"></i><i class="s" style="width:${sw}%"></i></div><em>${tx}</em></div>
+      <div class="bc">${b ? `<canvas data-seed="${c.mint}" data-iq="${b.iq}"></canvas><div class="iq">IQ ${b.iq}<small>${W.esc(b.rung)}</small></div><a class="open" href="/brain?m=${c.mint}">open →</a>` : `<button class="pair" data-m="${c.mint}" type="button">pair a brain</button>`}</div>
+    </div>`;
+  }
+  function drawActive(animate) {
+    const box = $('#arows'); if (!box) return;
+    let list = ACT.slice();
+    if (afil === 'no') list = list.filter(c => !c.brain); else if (afil === 'yes') list = list.filter(c => c.brain);
+    const by = { tx: (a, b) => (b.tx5m || 0) - (a.tx5m || 0), ch5m: (a, b) => (b.ch5m || -1e9) - (a.ch5m || -1e9), mc: (a, b) => (b.mc || 0) - (a.mc || 0), new: (a, b) => new Date(b.created || 0) - new Date(a.created || 0) };
+    list.sort(by[asort]); list = list.slice(0, 20);
+    $('#acount').textContent = ACT.length ? `${ACT.filter(c => c.brain).length} of ${ACT.length} have a brain · read ${W.ago(window.__actAt)}` : '';
+    if (!ACT.length) { box.innerHTML = `<div class="empty" style="margin:16px"><b>Reading Jupiter's live boards…</b>The most active pump.fun coins land here in a few seconds.</div>`; return; }
+    if (!list.length) { box.innerHTML = `<div class="empty" style="margin:16px"><b>Nothing here right now.</b>Try another filter.</div>`; return; }
+    const max = Math.max(...list.map(c => Math.max(c.buys5m || 0, c.sells5m || 0) * 2), 1);
+    // FLIP: rows glide to their new places
+    const before = new Map([...box.querySelectorAll('.brow')].map(r => [r.dataset.m, r.getBoundingClientRect().top]));
+    const prevTx = new Map(ACT._prev || []);
+    aglobes.forEach(g => g.stop()); aglobes.clear();
+    box.innerHTML = list.map((c, i) => arow(c, i, max)).join('');
+    box.querySelectorAll('canvas[data-seed]').forEach(cv => aglobes.set(cv.dataset.seed, new W.Globe(cv, cv.dataset.seed, { iq: +cv.dataset.iq, lat: 4, lon: 7, pad: .04 })));
+    box.querySelectorAll('.brow').forEach(r => {
+      const old = before.get(r.dataset.m), now = r.getBoundingClientRect().top;
+      if (animate && old != null && Math.abs(old - now) > 2 && !W.RM) { r.style.transform = `translateY(${old - now}px)`; r.style.transition = 'none'; requestAnimationFrame(() => { r.style.transition = 'transform .7s cubic-bezier(.2,.7,.1,1)'; r.style.transform = ''; }); }
+      else if (animate && old == null) r.classList.add('flash');
+      const c = ACT.find(x => x.mint === r.dataset.m); if (animate && c && prevTx.has(c.mint) && prevTx.get(c.mint) !== c.tx5m) r.classList.add('flash');
+    });
+    box.querySelectorAll('.pair').forEach(b => b.onclick = () => pair(b));
+  }
+  async function pair(btn) {
+    const m = btn.dataset.m, row = btn.closest('.brow'), c = ACT.find(x => x.mint === m);
+    btn.classList.add('busy'); btn.textContent = 'pairing…';
+    try {
+      const j = await W.api('wake', { body: { mint: m } });
+      const iq = 60;
+      c.brain = { iq, rung: 'dewdrop', thoughts: j.first && j.first.thought ? 1 : 0, last: j.first && j.first.thought };
+      const cell = row.querySelector('.bc');
+      cell.innerHTML = `<canvas></canvas><div class="iq">IQ ${iq}<small>dewdrop</small></div><a class="open" href="/brain?m=${m}">open →</a>`;
+      const g = new W.Globe(cell.querySelector('canvas'), m, { iq: 70, lat: 4, lon: 7, pad: .04, think: true }); g.pulse(); aglobes.set(m, g);
+      row.classList.add('born');
+      if (j.first && j.first.thought) { const say = document.createElement('div'); say.className = 'say'; say.innerHTML = `<b>$${W.esc(c.symbol)}</b> `; const s = document.createElement('span'); say.appendChild(s); row.appendChild(say); W.type(s, j.first.thought, 16); }
+      else if (j.first && j.first.error) W.toast('Paired. Its first thought is queued: ' + j.first.error);
+      window.WEBB3D && window.WEBB3D.flash(m);
+      $('#acount').textContent = `${ACT.filter(x => x.brain).length} of ${ACT.length} have a brain`;
+    } catch (e) { btn.classList.remove('busy'); btn.textContent = 'pair a brain'; W.toast(e.message); }
+  }
+  async function loadActive(first) {
+    try { const j = await W.api('active'); ACT._prev = ACT.map(c => [c.mint, c.tx5m]); const prev = ACT._prev; ACT = j.list || []; ACT._prev = prev; window.__actAt = j.at; drawActive(!first); }
+    catch (e) { if (!ACT.length) { const box = $('#arows'); if (box) box.innerHTML = `<div class="empty" style="margin:16px"><b>The board could not be read.</b>${W.esc(e.message)}</div>`; } }
+  }
+  document.querySelectorAll('#asort .chip').forEach(b => b.onclick = () => { document.querySelectorAll('#asort .chip').forEach(x => x.classList.toggle('on', x === b)); asort = b.dataset.s; drawActive(true); });
+  document.querySelectorAll('#afil .chip').forEach(b => b.onclick = () => { document.querySelectorAll('#afil .chip').forEach(x => x.classList.toggle('on', x === b)); afil = b.dataset.f; drawActive(true); });
+
+  /* ---------- the tape ---------- */
+  function tape(list) {
+    const el = $('#tapein'); if (!el || !list.length) return;
+    const items = list.slice(0, 18).map(t => `<a href="/brain?m=${t.mint}">${W.img(t.image)}<b>$${W.esc(t.sym)}</b>${W.esc(t.body)}</a>`).join('');
+    el.innerHTML = items + items;
+  }
+
+  /* ---------- cards lean toward the pointer ---------- */
+  document.addEventListener('pointermove', e => {
+    const c = e.target.closest && e.target.closest('.card'); document.querySelectorAll('.card.tilt').forEach(x => { if (x !== c) { x.classList.remove('tilt'); x.style.transform = ''; } });
+    if (!c || W.RM) return; const r = c.getBoundingClientRect(), x = (e.clientX - r.left) / r.width - .5, y = (e.clientY - r.top) / r.height - .5;
+    c.classList.add('tilt'); c.style.transform = `perspective(900px) rotateX(${(-y * 5).toFixed(2)}deg) rotateY(${(x * 6).toFixed(2)}deg) translateY(-3px)`;
+  });
+
   /* ---------- wake ---------- */
   const wf = $('#wake');
   if (wf) wf.onsubmit = async e => {
     e.preventDefault(); const out = $('#wakeOut'), v = $('#wakeIn').value.trim(); out.className = 'out';
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v)) { out.className = 'out err'; out.textContent = 'That is not a Solana token address.'; return; }
-    const btn = wf.querySelector('button'); btn.disabled = true; out.innerHTML = 'Reading the market and waking the brain <span class="dots"><i></i><i></i><i></i></span>';
-    try { const j = await W.api('wake', { body: { mint: v } }); out.textContent = j.first && j.first.thought ? 'Awake. Its first thought: “' + j.first.thought + '”' : 'Awake. Opening its page…'; setTimeout(() => location.href = '/brain?m=' + v, 1400); }
+    const btn = wf.querySelector('button'); btn.disabled = true; out.innerHTML = 'Reading the market and pairing a brain <span class="dots"><i></i><i></i><i></i></span>';
+    try { const j = await W.api('wake', { body: { mint: v } }); out.textContent = j.first && j.first.thought ? 'Paired. Its first thought: “' + j.first.thought + '”' : 'Paired. Opening its page…'; setTimeout(() => location.href = '/brain?m=' + v, 1400); }
     catch (err) { out.className = 'out err'; out.textContent = err.message; btn.disabled = false; }
   };
 
-  loadWeb(true); loadBrains(); loadFeed(true).then(() => setTimeout(showNext, 900));
+  loadWeb(true); loadBrains(); loadActive(true); loadFeed(true).then(() => setTimeout(showNext, 900));
+  setInterval(() => loadActive(false), 30e3);
   setInterval(() => loadWeb(false), 60e3); setInterval(loadBrains, 60e3); setInterval(() => loadFeed(false), 15e3);
 })();

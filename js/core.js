@@ -104,7 +104,16 @@
   }
 
   /* ---------- reveals ---------- */
+  function splitWords(el) {
+    if (el.dataset.split) return; el.dataset.split = 1; let i = 0;
+    const walk = node => [...node.childNodes].forEach(ch => {
+      if (ch.nodeType === 3) { const f = document.createDocumentFragment(); ch.textContent.split(/(\s+)/).forEach(p => { if (!p) return; if (/^\s+$/.test(p)) f.appendChild(document.createTextNode(p)); else { const s = document.createElement('span'); s.className = 'w'; s.style.setProperty('--i', i++); s.textContent = p; f.appendChild(s); } }); ch.replaceWith(f); }
+      else if (ch.nodeType === 1 && ch.tagName !== 'BR') walk(ch);
+    });
+    walk(el);
+  }
   function reveals() {
+    document.querySelectorAll('.split').forEach(splitWords);
     const els = document.querySelectorAll('.rv:not(.vis)');
     if (!('IntersectionObserver' in window)) { els.forEach(e => e.classList.add('vis')); return; }
     const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('vis'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });

@@ -28,7 +28,9 @@ void main(){ vec3 p = position; float r = length(p.xz); float y = -3.2*(1.0-pow(
  for(int i=0;i<8;i++){ vec4 s=uSrc[i]; float d=distance(p.xz,s.xy); y += s.z*exp(-d*d/40.0)*cos(d*1.3-uT*2.2+s.w); }
  p.y = y + p.y; vec4 mv = modelViewMatrix*vec4(p,1.0); gl_Position = projectionMatrix*mv; vFog = smoothstep(uF0,uF1,-mv.z); }`;
 const FS = `uniform vec3 uInk; uniform float uOp; varying float vFog; void main(){ gl_FragColor = vec4(uInk, uOp*(1.0-vFog)); }`;
-const webMat = op => new THREE.ShaderMaterial({ uniforms: { ...U, uOp: { value: op } }, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false });
+const MATS = [];
+const webMat = op => { const m = new THREE.ShaderMaterial({ uniforms: { ...U, uOp: { value: 0 } }, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false }); m.userData.op = op; MATS.push(m); return m; };
+const T_IN = performance.now();
 
 // the orb web: spokes plus a spiral that sags between them
 let s0 = 11; const rnd = () => (s0 = (s0 * 16807) % 2147483647) / 2147483647;
@@ -89,7 +91,8 @@ function layout(data) {
       const [x, z] = P2(a, r); obj.position.set(x, 0, z); obj.userData.spin = (hub ? .4 : .7) * (Math.random() < .5 ? -1 : 1);
       const hit = new THREE.Mesh(hitGeo, hitMat); hit.scale.setScalar(hub ? 1.05 : .75); hit.position.copy(obj.position);
       G.add(obj); G.add(hit);
-      const n = { c, hub, parent, a, r, obj, hit, flash: 0, rate: Math.min(1.4, Math.log10(1 + (c.tx5m || 0)) / 2.2), acc: Math.random() };
+      obj.scale.setScalar(0.001);
+      const n = { c, hub, parent, a, r, obj, hit, flash: 0, born: performance.now() + 500 + nodes.length * 28, rate: Math.min(1.4, Math.log10(1 + (c.tx5m || 0)) / 2.2), acc: Math.random() };
       hit.userData.n = n;
       if (hub) {
         const el = document.createElement('a'); el.className = 'nl'; el.href = '/brain?m=' + c.mint;
@@ -154,6 +157,7 @@ function frame(now) {
   if (!visible || document.hidden) { last = now; return; }
   const dt = Math.min(.05, (now - last) / 1000); last = now; const t = (now - t0) / 1000;
   U.uT.value = t;
+  const kin = Math.min(1, (now - T_IN) / 2200), ein = 1 - Math.pow(1 - kin, 3); MATS.forEach(m => { m.uniforms.uOp.value = m.userData.op * ein; });
   if (!drag) { rotV += (.018 - rotV) * .01; G.rotation.y += rotV * dt * (W.RM ? 0 : 1); }
   G.rotation.x = my * .03; cam.position.x += (mx * 1.4 - cam.position.x) * .03; cam.lookAt(LOOK);
   // ripple sources: the busiest coins on the web
@@ -162,11 +166,11 @@ function frame(now) {
   // nodes ride the surface
   for (const n of nodes) {
     const p = n.obj.position; const y = surfY(p.x, p.z, t) + (n.hub ? .46 : .26) * (1 + n.flash * .6);
-    p.y = y; n.hit.position.y = y; n.obj.rotation.y += n.obj.userData.spin * dt; const s = 1 + n.flash * .7 + (n === hover ? .35 : 0); n.obj.scale.setScalar(s);
+    p.y = y; n.hit.position.y = y; n.obj.rotation.y += n.obj.userData.spin * dt; const pk = Math.max(0, Math.min(1, (now - n.born) / 650)), pop = pk <= 0 ? .001 : 1 + 2.2 * Math.pow(pk - 1, 3) + 1.2 * Math.pow(pk - 1, 2); const s = (1 + n.flash * .7 + (n === hover ? .35 : 0)) * Math.max(.001, pop); n.obj.scale.setScalar(s);
     n.flash = Math.max(0, n.flash - dt * .7);
     if (!W.RM) { n.acc += n.rate * dt * .55; while (n.acc >= 1 && pulses.length < MAXP) { n.acc -= 1; pulses.push({ a: n.a, r: n.r, v: 3.2 + Math.random() * 1.6 }); } }
   }
-  globe.position.y = surfY(0, 0, t) + 1.7; core.rotation.y += dt * .25; core.rotation.z = .2;
+  globe.position.y = surfY(0, 0, t) + 1.7; core.rotation.y += dt * .25; core.rotation.z = .2; core.scale.setScalar(Math.max(.001, 1 - Math.pow(1 - Math.min(1, (now - T_IN) / 1400), 4)));
   // move the pulses
   for (let i = pulses.length - 1; i >= 0; i--) { const q = pulses[i]; q.r -= q.v * dt; if (q.r < 2.4) { pulses.splice(i, 1); continue; } }
   for (let i = 0; i < MAXP; i++) {

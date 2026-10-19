@@ -10,7 +10,7 @@
     document.title = 'WEBB — $' + sym;
     const pic = $('#pic'); pic.classList.remove('skel'); pic.src = (b && b.image) || l.image || '/img/node.svg'; pic.onerror = () => { pic.src = '/img/node.svg'; };
     $('#nm').innerHTML = `${W.esc(name || sym)} <span>$${W.esc(sym)}</span>`;
-    $('#chips').innerHTML = b ? [b.rung, b.temper, 'obsessed with ' + b.obsession, b.origin === 'webb' ? 'born on webb' : b.origin === 'woken' ? 'woken by hand' : 'on the web', 'born ' + W.ago(b.born)].map(t => `<span class="tag">${W.esc(t)}</span>`).join('') : '<span class="tag">no brain yet</span>';
+    $('#chips').innerHTML = b ? [b.rung, b.temper, 'obsessed with ' + b.obsession, b.origin === 'webb' ? 'born on webb' : b.origin === 'woken' ? 'paired by hand' : 'on the web', 'born ' + W.ago(b.born)].map(t => `<span class="tag">${W.esc(t)}</span>`).join('') : '<span class="tag">no brain yet</span>';
     $('#acts').innerHTML = `<button class="btn o s" id="cp">copy CA</button><a class="btn o s" href="https://pump.fun/coin/${mint}" target="_blank" rel="noopener">pump.fun ↗</a><a class="btn o s" href="https://dexscreener.com/solana/${mint}" target="_blank" rel="noopener">chart ↗</a>${b ? '' : '<button class="btn s" id="wk">wake its brain</button>'}`;
     $('#cp').onclick = () => W.copy(mint, 'Contract address copied');
     const wk = $('#wk'); if (wk) wk.onclick = async () => { wk.disabled = true; wk.textContent = 'waking…'; try { await W.api('wake', { body: { mint } }); load(); } catch (e) { W.toast(e.message); wk.disabled = false; wk.textContent = 'wake its brain'; } };
