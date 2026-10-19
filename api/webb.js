@@ -19,7 +19,7 @@ const ASKS_DAY = Number(E('WEBB_ASKS_DAY', '600')) || 600;          // of which 
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SOL = 'So11111111111111111111111111111111111111112';
 const STABLE = /^(usd|usdc|usdt|usds|usdf|pyusd|eurc|usdg)$/i;
-const WEB_SECS = 60, WEB_MAINS = 26, BETAS_PER = 8, HUB_MAX_H = 72, RIDER_MAX_H = 168, FRESH_MAX_H = 6;
+const WEB_SECS = 60, WEB_MAINS = 26, BETAS_PER = 8, HUB_MAX_H = 72, RIDER_MAX_H = 168, FRESH_MAX_H = 12;
 const ageH = c => c && c.created ? (Date.now() - new Date(c.created).getTime()) / 36e5 : null;
 
 /* ---------------- plumbing ---------------- */
@@ -214,7 +214,7 @@ function hitKey(c, keys) {
   }
   return null;
 }
-const BOARDS = { trending: '/tokens/v2/toptrending/1h?limit=100', traded: '/tokens/v2/toptraded/1h?limit=100', organic: '/tokens/v2/toporganicscore/1h?limit=100', hot: '/tokens/v2/toptrending/5m?limit=100' };
+const BOARDS = { trending: '/tokens/v2/toptrending/1h?limit=100', traded: '/tokens/v2/toptraded/1h?limit=100', organic: '/tokens/v2/toporganicscore/1h?limit=100', hot: '/tokens/v2/toptrending/5m?limit=100', six: '/tokens/v2/toptrending/6h?limit=100', sixt: '/tokens/v2/toptraded/6h?limit=100' };
 const isPump = t => t && (t.launchpad === 'pump.fun' || /pump$/.test(t.id || ''));
 const slim = c => ({ mint: c.mint, symbol: c.symbol, name: c.name, image: pubImg(c.image), mc: c.mc, liq: c.liq, price: c.price, ch5m: c.ch5m, ch1h: c.ch1h, ch24: c.ch24, vol5m: c.vol5m || 0, vol1h: c.vol1h || 0, vol24: c.vol24 || 0, tx5m: c.tx5m || 0, holders: c.holders || 0, organic: c.organic, created: c.created, bonded: !!c.bonded });
 async function buildWeb(prev) {
@@ -296,7 +296,7 @@ async function web() {
 }
 
 // fresh drops: the newest pump.fun coins that are already being bought, under six hours old. Rebuilt every 20 seconds.
-const FRESH = ['/tokens/v2/recent', '/tokens/v2/toptrending/5m?limit=100', '/tokens/v2/toptraded/5m?limit=100'];
+const FRESH = ['/tokens/v2/recent', '/tokens/v2/toptrending/5m?limit=100', '/tokens/v2/toptraded/5m?limit=100', '/tokens/v2/toporganicscore/5m?limit=100', '/tokens/v2/toptrending/1h?limit=100'];
 async function freshNow() {
   return cached('fresh', 20, async () => {
     const by = new Map(); let ok = 0;
@@ -306,13 +306,13 @@ async function freshNow() {
         for (const t of (Array.isArray(j) ? j : [])) {
           if (!t || !t.id || STABLE.test(t.symbol || '') || !isPump(t) || by.has(t.id)) continue;
           const c = jupShape(t), h = ageH(c);
-          if (h == null || h > FRESH_MAX_H || c.mc < 6000 || !safe(c.symbol) || !safe(c.name)) continue;
+          if (h == null || h > FRESH_MAX_H || c.mc < 5000 || !safe(c.symbol) || !safe(c.name)) continue;
           by.set(c.mint, c);
         }
       } catch (e) { }
     }
     if (!ok) throw http(502, 'Jupiter did not answer.');
-    const list = [...by.values()].sort((a, b) => new Date(b.created) - new Date(a.created)).slice(0, 36);
+    const list = [...by.values()].sort((a, b) => new Date(b.created) - new Date(a.created)).slice(0, 44);
     try { const im = await imagesFor(list.filter(c => !c.image).map(c => c.mint), Date.now() + 5000); for (const c of list) if (!c.image && im[c.mint]) c.image = im[c.mint]; } catch (e) { }
     const out = { at: Date.now(), list: list.map(c => ({ ...slim(c), buys5m: c.buys5m, sells5m: c.sells5m })) };
     await observe({ at: out.at, fresh: out.list }).catch(e => console.error('observe fresh', e.message));
@@ -489,7 +489,7 @@ R['GET config'] = async () => ({ model: MODEL, callsPerDay: CALLS_DAY, asksPerDa
 R['GET web'] = async () => {
   const [v, fr] = await Promise.all([web(), freshNow().catch(() => ({ list: [] }))]);
   const onWeb = new Set(v.hubs.flatMap(h => [h.mint, ...h.threads.map(t => t.mint)]));
-  const fresh = fr.list.filter(c => !onWeb.has(c.mint)).slice(0, 30);
+  const fresh = fr.list.filter(c => !onWeb.has(c.mint)).slice(0, 40);
   const mints = [...onWeb, ...fresh.map(c => c.mint)];
   const rows = await db()`SELECT mint, vol_seen, thoughts, talks, last_thought, last_think, born, origin, launch FROM wb_brains WHERE mint = ANY(${mints})`;
   const br = new Map(rows.map(r => [r.mint, r]));
